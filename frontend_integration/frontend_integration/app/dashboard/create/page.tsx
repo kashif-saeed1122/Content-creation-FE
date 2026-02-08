@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
 import { GlassCard } from '@/components/ui/glass-card';
 import { Button } from '@/components/ui/button';
 import { TechInput } from '@/components/ui/tech-input';
-import { useOptimizedMutation} from '@/lib/hooks/useOptimizedQuery';
-import { apiClient, campaignApi, creditApi, integrationApi } from '@/lib/api-client';
+import { useOptimizedMutation, useQuery } from '@/lib/hooks/useOptimizedQuery';
+import { apiClient, campaignApi, creditApi } from '@/lib/api-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Sparkles, CheckCircle2, Target, ArrowRight, RotateCcw, Zap, Repeat } from 'lucide-react';
 
@@ -36,7 +35,6 @@ export default function CreateArticlePage() {
   const [targetLength, setTargetLength] = useState(1500);
   const [sourceCount, setSourceCount] = useState(10);
   const [scheduledAt, setScheduledAt] = useState<string>('');
-  const [webhookIntegrationId, setWebhookIntegrationId] = useState<string | null>(null);
   
   const [campaignName, setCampaignName] = useState('');
   const [articlesPerDay, setArticlesPerDay] = useState(2);
@@ -51,14 +49,6 @@ export default function CreateArticlePage() {
     queryKey: ['credit-balance'],
     queryFn: async () => {
       const response = await creditApi.getBalance();
-      return response.data;
-    }
-  });
-
-  const { data: integrations } = useQuery({
-    queryKey: ['integrations'],
-    queryFn: async () => {
-      const response = await integrationApi.list();
       return response.data;
     }
   });
@@ -105,7 +95,6 @@ export default function CreateArticlePage() {
         total_articles: totalArticles || null,
         target_length: targetLength,
         source_count: sourceCount,
-        webhook_integration_id: webhookIntegrationId,
       });
       return response.data;
     },
@@ -122,8 +111,7 @@ export default function CreateArticlePage() {
         target_length: targetLength,
         source_count: sourceCount,
         scheduled_at: scheduledAt || null,
-        timezone: 'UTC',
-        webhook_integration_id: webhookIntegrationId,
+        timezone: 'UTC'
       });
       return response.data;
     },
@@ -477,24 +465,6 @@ export default function CreateArticlePage() {
                   />
                 </div>
               )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-mono text-gray-400 mb-3 tracking-wider">
-                WEBHOOK INTEGRATION (Optional)
-              </label>
-              <select
-                value={webhookIntegrationId || ''}
-                onChange={(e) => setWebhookIntegrationId(e.target.value || null)}
-                className="w-full bg-black/40 border border-[var(--border-primary)] rounded-md px-4 py-3 text-sm text-white focus:border-[var(--accent-amber)] outline-none transition-all"
-              >
-                <option value="">No webhook (manual posting)</option>
-                {integrations?.map((integration: any) => (
-                  <option key={integration.id} value={integration.id}>
-                    {integration.name}
-                  </option>
-                ))}
-              </select>
             </div>
           </GlassCard>
 

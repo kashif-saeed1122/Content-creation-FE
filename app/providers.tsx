@@ -19,15 +19,26 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   // Re-hydrate auth state on mount
   useEffect(() => {
     const initAuth = async () => {
-        // Try to refresh token immediately on load to check if session is valid
+        // FIX: Stop infinite loops by checking if we even have a session locally.
+        // Only call the API if we think we are logged in.
+        // @ts-ignore - access state directly
+        const { isAuthenticated } = useAuthStore.getState();
+
+        // If we are already logged out locally, DO NOT call the API.
+        if (!isAuthenticated) {
+            return;
+        }
+
         try {
             const { data } = await apiClient.post('/auth/refresh');
             if (data?.access_token) {
                 useAuthStore.getState().setAuth(data.user, data.access_token);
             }
         } catch (e) {
-            // Use silent fail here; if they aren't logged in, they aren't logged in.
-            console.log("Session invalid or expired");
+            // If session is invalid (401), logout to clear local state.
+            // Next time this runs, isAuthenticated will be false, stopping the loop.
+            console.log("Session invalid or expired - Clearing auth state");
+            useAuthStore.getState().logout();
         }
     };
     initAuth();

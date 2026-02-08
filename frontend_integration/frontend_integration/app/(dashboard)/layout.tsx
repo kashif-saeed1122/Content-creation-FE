@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { Zap, LayoutGrid, FileText, PlusSquare, LogOut, Target, Settings, CreditCard, Key, Webhook } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tantml/react-query';
 import { DataStream } from '@/components/ui/data-stream';
 import { creditApi } from '@/lib/api-client';
 

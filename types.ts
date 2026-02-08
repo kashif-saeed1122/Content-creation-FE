@@ -101,7 +101,3 @@ export interface WebhookIntegration {
   last_test_status: string | null;
   created_at: string;
 }
-
-export interface WebhookIntegrationWithSecret extends WebhookIntegration {
-  webhook_secret?: string;
-}

@@ -1,64 +1,43 @@
 'use client';
 
-import { useState, use } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useParams, useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
-import { Article } from '@/app/types';
 import { GlassCard } from '@/components/ui/glass-card';
+import { Article, OutlineItem, Keyword } from '@/app/types';
 import { 
-  ChevronLeft, Globe, Copy, Edit3, Save, X, ExternalLink, 
-  FileText, Tag, Layers, Check, AlertOctagon 
+  ArrowLeft, FileText, Hash, Link as LinkIcon, Target, 
+  Clock, Calendar, MapPin, Zap, Copy, Check, ExternalLink,
+  Edit, Save, X, Download
 } from 'lucide-react';
-import Link from 'next/link';
+import { format, isFuture, parseISO } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
+import { CountdownTimer } from '@/components/ui/countdown-timer';
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { format } from 'date-fns';
 
-// Next.js 15: params is now a Promise
-type ArticlePageProps = {
-  params: Promise<{ id: string }>;
-};
-
-export default function ArticlePage({ params }: ArticlePageProps) {
-  // Use React.use() to unwrap the Promise
-  const resolvedParams = use(params);
-  const articleId = resolvedParams.id;
-  
+export default function ArticleDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const articleId = params.id as string;
+  const [copiedContent, setCopiedContent] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState('');
-  const [copied, setCopied] = useState(false);
-  const queryClient = useQueryClient();
-  
-  const isIdPresent = Boolean(articleId && articleId !== 'undefined');
 
-  console.log('🔍 Article Page Debug:', {
-    params: resolvedParams,
-    articleId,
-    isIdPresent,
-    idType: typeof articleId
-  });
-
-  // Fetch article with all related data
-  const { data: article, isLoading, error } = useQuery<Article>({
+  const { data: article, isLoading } = useQuery<Article>({
     queryKey: ['article', articleId],
     queryFn: async () => {
-      if (!articleId || articleId === 'undefined') throw new Error("Invalid ID");
-      console.log('📡 Fetching article:', articleId);
       const response = await apiClient.get(`/articles/${articleId}`);
-      console.log('✅ Article data received:', response.data);
       return response.data;
     },
-    enabled: isIdPresent,
-    retry: 1,
-    refetchInterval: (query) => {
-      return query.state.data?.status === 'processing' ? 3000 : false;
-    }
+    enabled: !!articleId,
   });
 
-  // Save edited content mutation
-  const saveMutation = useMutation({
-    mutationFn: async (content: string) => {
-      return await apiClient.patch(`/articles/${articleId}`, { content });
+  // Mutation for updating article content
+  const updateMutation = useMutation({
+    mutationFn: async (newContent: string) => {
+      await apiClient.patch(`/articles/${articleId}`, { content: newContent });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['article', articleId] });
@@ -66,13 +45,82 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     }
   });
 
+  // Safe parsers
+  const parseKeywords = (keywords: any): Keyword[] => {
+    if (!keywords) return [];
+    if (Array.isArray(keywords)) {
+      return keywords.map(k => {
+        if (typeof k === 'string') return { text: k, keyword: k };
+        if (typeof k === 'object') return k;
+        return { text: String(k), keyword: String(k) };
+      });
+    }
+    return [];
+  };
+
+  const parseOutline = (outline: any): OutlineItem[] => {
+    if (!outline) return [];
+    if (Array.isArray(outline)) {
+      return outline.flatMap((item, idx) => {
+        // Handle nested structure with subsections
+        const items: OutlineItem[] = [];
+        
+        if (typeof item === 'string') {
+          items.push({ id: String(idx), text: item, title: item, level: 1 });
+        } else if (typeof item === 'object') {
+          const mainItem: OutlineItem = {
+            id: item.id || String(idx),
+            text: item.text || item.heading || item.title || '',
+            title: item.heading || item.title || item.text || '',
+            level: item.level || 1
+          };
+          items.push(mainItem);
+          
+          // Handle subsections
+          if (item.subsections && Array.isArray(item.subsections)) {
+            item.subsections.forEach((sub: any, subIdx: number) => {
+              items.push({
+                id: sub.id || `${idx}-${subIdx}`,
+                text: sub.text || sub.heading || sub.title || '',
+                title: sub.heading || sub.title || sub.text || '',
+                level: sub.level || 2
+              });
+            });
+          }
+        }
+        
+        return items;
+      });
+    }
+    return [];
+  };
+
+  const copyToClipboard = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedContent(true);
+    setTimeout(() => setCopiedContent(false), 2000);
+  };
+
+  const downloadMarkdown = () => {
+    if (!article?.content) return;
+    const blob = new Blob([article.content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${article.topic || 'article'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleEdit = () => {
     setEditedContent(article?.content || '');
     setIsEditing(true);
   };
 
   const handleSave = () => {
-    saveMutation.mutate(editedContent);
+    updateMutation.mutate(editedContent);
   };
 
   const handleCancel = () => {
@@ -80,354 +128,413 @@ export default function ArticlePage({ params }: ArticlePageProps) {
     setEditedContent('');
   };
 
-  const handleCopy = () => {
-    if (article?.content) {
-      navigator.clipboard.writeText(article.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const handleExportPDF = () => {
-    const printWindow = window.open('', '_blank');
-    if (printWindow && article) {
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>${article.topic || 'Article'}</title>
-            <style>
-              body { font-family: Georgia, serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; }
-              h1 { color: #1a1a1a; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
-              h2 { color: #2563eb; margin-top: 30px; }
-              h3 { color: #334155; }
-              p { margin: 15px 0; color: #1e293b; }
-              code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
-              pre { background: #f1f5f9; padding: 15px; border-radius: 8px; overflow-x: auto; }
-              blockquote { border-left: 4px solid #2563eb; padding-left: 20px; margin: 20px 0; color: #475569; font-style: italic; }
-              ul, ol { padding-left: 30px; }
-              li { margin: 8px 0; }
-              .meta { color: #64748b; font-size: 14px; margin-bottom: 30px; }
-            </style>
-          </head>
-          <body>
-            <div class="meta">
-              <strong>Category:</strong> ${article.category || 'General'} | 
-              <strong>Date:</strong> ${format(new Date(article.created_at), 'MMMM dd, yyyy')} | 
-              <strong>Status:</strong> ${article.status}
-            </div>
-            ${article.content ? `<div>${article.content.replace(/\n/g, '<br>')}</div>` : '<p>No content available</p>'}
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.print();
-    }
-  };
-
-  // Loading State
-  if (isLoading) return (
-    <div className="h-[calc(100vh-6rem)] flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-12 h-12 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        <div className="text-center">
-          <p className="font-mono text-sm text-blue-400 animate-pulse">Loading Article...</p>
-          <p className="font-mono text-xs text-gray-600 mt-2">ID: {articleId?.slice(0, 8)}</p>
-        </div>
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  // Error State
-  if (error || (!article && !isLoading)) return (
-    <div className="h-[calc(100vh-6rem)] flex items-center justify-center">
-      <GlassCard className="max-w-md p-8 text-center">
-        <AlertOctagon className="mx-auto text-red-500 mb-4" size={48} />
-        <h2 className="text-xl font-bold text-white mb-2">Article Not Found</h2>
-        <p className="text-red-400 font-mono text-sm mb-4">
-          {(error as any)?.response?.status === 404 ? 'This article does not exist or has been deleted.' : 'Unable to load article data.'}
-        </p>
-        <div className="bg-black/50 p-3 rounded text-xs font-mono text-gray-500 mb-6 break-all">
-          Article ID: {articleId || 'UNDEFINED'}
-        </div>
-        <Link href="/dashboard">
-          <button className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors">
-            Return to Dashboard
-          </button>
-        </Link>
-      </GlassCard>
-    </div>
-  );
+  if (!article) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-gray-500 font-mono">Article not found</p>
+      </div>
+    );
+  }
+
+  const keywords = parseKeywords(article.brief?.keywords);
+  const outline = parseOutline(article.brief?.outline);
+  const isScheduled = article.scheduled_at && isFuture(parseISO(article.scheduled_at));
+  const scheduledTime = article.scheduled_at ? (() => {
+    try {
+      const date = parseISO(article.scheduled_at);
+      const zonedDate = toZonedTime(date, article.timezone || 'UTC');
+      return {
+        date: format(zonedDate, 'MMMM dd, yyyy'),
+        time: format(zonedDate, 'HH:mm:ss'),
+        timezone: article.timezone || 'UTC'
+      };
+    } catch (e) {
+      return null;
+    }
+  })() : null;
+
+  const wordCount = article.content ? article.content.split(/\s+/).length : 0;
+  const targetProgress = article.target_length ? (wordCount / article.target_length) * 100 : 0;
 
   const getStatusColor = (status: string) => {
     const colors = {
-      processing: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
-      completed: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
-      scheduled: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
-      failed: 'text-red-400 bg-red-500/10 border-red-500/30',
-      posted: 'text-purple-400 bg-purple-500/10 border-purple-500/30'
+      processing: 'text-amber-400 bg-amber-400/10 border-amber-400/30',
+      completed: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30',
+      scheduled: 'text-blue-400 bg-blue-400/10 border-blue-400/30',
+      failed: 'text-red-400 bg-red-400/10 border-red-400/30',
+      posted: 'text-purple-400 bg-purple-400/10 border-purple-400/30'
     };
     return colors[status as keyof typeof colors] || colors.completed;
   };
 
   return (
-    <div className="min-h-screen pb-20">
+    <div className="space-y-6 animate-fade-in-up pb-20">
       {/* Header */}
-      <div className="sticky top-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/10 -mx-8 -mt-8 mb-8">
-        <div className="max-w-7xl mx-auto px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link href="/dashboard">
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors text-gray-400 hover:text-white">
-                  <ChevronLeft size={20} />
-                </button>
-              </Link>
-              <div>
-                <h1 className="text-xl font-bold text-white">{article?.topic || 'Untitled Article'}</h1>
-                <div className="flex items-center gap-3 mt-1">
-                  <span className={`text-xs font-mono px-2 py-1 rounded border ${getStatusColor(article?.status || 'processing')}`}>
-                    {article?.status?.toUpperCase()}
-                  </span>
-                  <span className="text-xs text-gray-500 font-mono">
-                    {article?.category || 'General'}
-                  </span>
-                  <span className="text-xs text-gray-600 font-mono">
-                    {format(new Date(article?.created_at || new Date()), 'MMM dd, yyyy')}
-                  </span>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <button 
+            onClick={() => router.back()}
+            className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-4"
+          >
+            <ArrowLeft size={16} />
+            Back to Dashboard
+          </button>
+          
+          <h1 className="text-3xl font-bold text-white mb-2">
+            {article.topic || 'Untitled Article'}
+          </h1>
+          
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold font-mono border ${getStatusColor(article.status)}`}>
+              {article.status.toUpperCase()}
+            </span>
+            
+            <span className="px-3 py-1 rounded-full text-xs bg-white/10 text-gray-300 border border-white/20">
+              {article.category}
+            </span>
+            
+            <span className="text-xs text-gray-500 font-mono">
+              ID: {article.id.slice(0, 13)}...
+            </span>
+            
+            <span className="text-xs text-gray-500">
+              Created {format(new Date(article.created_at), 'MMM dd, yyyy HH:mm')}
+            </span>
+          </div>
+        </div>
+
+        {article.content && (
+          <div className="flex gap-2">
+            <button 
+              onClick={downloadMarkdown}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 rounded-lg border border-purple-500/30 hover:border-purple-400 transition-all"
+            >
+              <Download size={16} />
+              Download
+            </button>
+            
+            <button 
+              onClick={() => copyToClipboard(article.content!)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg border border-blue-500/30 hover:border-blue-400 transition-all"
+            >
+              {copiedContent ? <Check size={16} /> : <Copy size={16} />}
+              {copiedContent ? 'Copied!' : 'Copy'}
+            </button>
+            
+            {!isEditing && (
+              <button 
+                onClick={handleEdit}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/30 hover:border-emerald-400 transition-all"
+              >
+                <Edit size={16} />
+                Edit
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Metadata Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <GlassCard className="p-4 border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+              <FileText className="text-emerald-400" size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 font-mono mb-0.5">WORD COUNT</p>
+              <p className="text-xl font-bold text-white">
+                {wordCount} / {article.target_length || 1500}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <div className="h-1.5 w-24 bg-gray-800 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
+                    style={{ width: `${Math.min(100, targetProgress)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 font-mono">
+                  {Math.round(targetProgress)}%
+                </span>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-4 border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+              <LinkIcon className="text-cyan-400" size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 font-mono mb-0.5">SOURCES</p>
+              <p className="text-xl font-bold text-white">
+                {article.sources?.length || 0} / {article.source_count || 5}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Research links</p>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-4 border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/30">
+              <Hash className="text-purple-400" size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 font-mono mb-0.5">KEYWORDS</p>
+              <p className="text-xl font-bold text-white">{keywords.length}</p>
+              <p className="text-xs text-gray-500 mt-1">SEO targets</p>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className="p-4 border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <Target className="text-amber-400" size={20} />
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 font-mono mb-0.5">SECTIONS</p>
+              <p className="text-xl font-bold text-white">{outline.length}</p>
+              <p className="text-xs text-gray-500 mt-1">Content blocks</p>
+            </div>
+          </div>
+        </GlassCard>
+      </div>
+
+      {/* Schedule Info */}
+      {isScheduled && scheduledTime && (
+        <GlassCard className="p-6 border-blue-500/30 bg-blue-500/5">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="text-blue-400" size={20} />
+                <h3 className="text-lg font-bold text-white">Scheduled Publication</h3>
+              </div>
+              <div className="flex items-center gap-6 text-sm">
+                <div className="flex items-center gap-2 text-blue-400">
+                  <Calendar size={16} />
+                  <span className="font-mono">{scheduledTime.date}</span>
+                </div>
+                <div className="flex items-center gap-2 text-blue-300">
+                  <Clock size={16} />
+                  <span className="font-mono">{scheduledTime.time}</span>
+                </div>
+                <div className="flex items-center gap-2 text-gray-400">
+                  <MapPin size={16} />
+                  <span className="font-mono">{scheduledTime.timezone}</span>
                 </div>
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              {!isEditing ? (
-                <>
-                  <button 
-                    onClick={handleEdit}
-                    disabled={!article?.content}
-                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Edit3 size={16} />
-                    Edit
-                  </button>
-                  <button 
-                    onClick={handleExportPDF}
-                    disabled={!article?.content}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/50 text-purple-300 hover:text-white transition-all text-sm font-medium rounded-lg disabled:opacity-50"
-                  >
-                    <FileText size={16} />
-                    Export PDF
-                  </button>
-                  <button 
-                    onClick={handleCopy}
-                    disabled={!article?.content}
-                    className={`flex items-center gap-2 px-4 py-2 border transition-all text-sm font-medium rounded-lg ${
-                      copied 
-                        ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50' 
-                        : 'bg-blue-600/20 text-blue-400 border-blue-500/50 hover:bg-blue-600/30'
-                    } disabled:opacity-50`}
-                  >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button 
-                    onClick={handleCancel}
-                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-all text-sm font-medium rounded-lg"
-                  >
-                    <X size={16} />
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleSave}
-                    disabled={saveMutation.isPending}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 border border-emerald-500/50 text-white transition-all text-sm font-medium rounded-lg disabled:opacity-50"
-                  >
-                    <Save size={16} />
-                    {saveMutation.isPending ? 'Saving...' : 'Save Changes'}
-                  </button>
-                </>
-              )}
-            </div>
+            <CountdownTimer targetDate={article.scheduled_at!} />
           </div>
-        </div>
-      </div>
+        </GlassCard>
+      )}
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Left Sidebar - Metadata & Sources */}
-        <div className="lg:col-span-3 space-y-6">
-          
-          {/* Article Metadata */}
-          <GlassCard className="p-6">
-            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Tag size={16} className="text-blue-400" />
-              Metadata
-            </h3>
-            <div className="space-y-3 text-sm">
-              <div>
-                <span className="text-gray-500 block text-xs mb-1">Target Length</span>
-                <span className="text-white font-mono">{article?.target_length || 1500} words</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block text-xs mb-1">Sources Used</span>
-                <span className="text-white font-mono">{article?.sources?.length || 0} sources</span>
-              </div>
-              <div>
-                <span className="text-gray-500 block text-xs mb-1">Article ID</span>
-                <span className="text-gray-400 font-mono text-xs break-all">{article?.id}</span>
-              </div>
-            </div>
-          </GlassCard>
+      {/* Original Query */}
+      {article.raw_query && (
+        <GlassCard className="p-6 border-white/10">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="text-purple-400" size={20} />
+            <h3 className="text-lg font-bold text-white">Original Query</h3>
+          </div>
+          <p className="text-gray-300 leading-relaxed">{article.raw_query}</p>
+        </GlassCard>
+      )}
 
+      {/* Two Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column - SEO Brief */}
+        <div className="lg:col-span-1 space-y-6">
           {/* Keywords */}
-          {article?.brief?.keywords && (
-            <GlassCard className="p-6">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Tag size={16} className="text-emerald-400" />
-                Keywords
-              </h3>
+          {keywords.length > 0 && (
+            <GlassCard className="p-6 border-white/10">
+              <div className="flex items-center gap-2 mb-4">
+                <Hash className="text-purple-400" size={20} />
+                <h3 className="text-lg font-bold text-white">Target Keywords</h3>
+              </div>
               <div className="flex flex-wrap gap-2">
-                {(Array.isArray(article.brief.keywords) 
-                  ? article.brief.keywords 
-                  : []
-                ).slice(0, 10).map((kw: any, i: number) => (
-                  <span key={i} className="text-xs px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-medium">
-                    {typeof kw === 'string' ? kw : kw.keyword || kw.text}
+                {keywords.slice(0, 20).map((keyword, idx) => (
+                  <span 
+                    key={idx}
+                    className="px-3 py-1 rounded-full text-xs bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono"
+                  >
+                    {keyword.text || keyword.keyword}
                   </span>
                 ))}
+                {keywords.length > 20 && (
+                  <span className="px-3 py-1 rounded-full text-xs bg-gray-800 text-gray-400 border border-gray-700 font-mono">
+                    +{keywords.length - 20} more
+                  </span>
+                )}
+              </div>
+            </GlassCard>
+          )}
+
+          {/* OUTLINE - This replaces Strategy */}
+          {outline.length > 0 && (
+            <GlassCard className="p-6 border-white/10">
+              <div className="flex items-center gap-2 mb-4">
+                <FileText className="text-emerald-400" size={20} />
+                <h3 className="text-lg font-bold text-white">Content Outline</h3>
+              </div>
+              <div className="space-y-2">
+                {outline.map((item, idx) => {
+                  const level = item.level || 1;
+                  const indent = (level - 1) * 16;
+                  
+                  return (
+                    <div 
+                      key={item.id || idx}
+                      style={{ paddingLeft: `${indent}px` }}
+                      className={`flex items-start gap-2 py-2 border-l-2 pl-3 ${
+                        level === 1 ? 'border-emerald-500/50' : 
+                        level === 2 ? 'border-blue-500/50' : 
+                        'border-purple-500/50'
+                      }`}
+                    >
+                      <span className={`text-xs font-mono mt-0.5 ${
+                        level === 1 ? 'text-emerald-400' :
+                        level === 2 ? 'text-blue-400' :
+                        'text-purple-400'
+                      }`}>
+                        {level === 1 ? 'H1' : level === 2 ? 'H2' : level === 3 ? 'H3' : 'H4'}
+                      </span>
+                      <p className={`text-sm text-gray-300 ${level === 1 ? 'font-semibold' : ''}`}>
+                        {item.title || item.text}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             </GlassCard>
           )}
 
           {/* Sources */}
-          {article?.sources && article.sources.length > 0 && (
-            <GlassCard className="p-6">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Globe size={16} className="text-blue-400" />
-                Research Sources ({article.sources.length})
-              </h3>
+          {article.sources && article.sources.length > 0 && (
+            <GlassCard className="p-6 border-white/10">
+              <div className="flex items-center gap-2 mb-4">
+                <LinkIcon className="text-cyan-400" size={20} />
+                <h3 className="text-lg font-bold text-white">Research Sources</h3>
+              </div>
               <div className="space-y-3">
-                {article.sources.map((source: any, idx: number) => (
-                  <a 
-                    key={source.id || idx} 
-                    href={source.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="block group"
+                {article.sources.map((source, idx) => (
+                  <div 
+                    key={source.id}
+                    className="p-3 bg-black/20 rounded-lg border border-white/5 hover:border-cyan-500/30 transition-colors group"
                   >
-                    <div className="p-3 rounded-lg bg-white/5 border border-white/10 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all">
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <span className="text-xs font-mono text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">
-                          {idx + 1}
-                        </span>
-                        <ExternalLink size={12} className="text-gray-600 group-hover:text-blue-400 transition-colors" />
-                      </div>
-                      <p className="text-sm text-gray-300 group-hover:text-blue-300 transition-colors line-clamp-2 leading-snug">
-                        {source.title || source.url}
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-xs font-medium text-gray-300 line-clamp-2 group-hover:text-white transition-colors flex-1">
+                        {source.title || 'Untitled Source'}
                       </p>
-                      {source.source_origin && (
-                        <span className="text-xs text-gray-500 mt-2 block">{source.source_origin}</span>
-                      )}
+                      <span className="text-xs text-gray-600 font-mono shrink-0">
+                        #{idx + 1}
+                      </span>
                     </div>
-                  </a>
-                ))}
-              </div>
-            </GlassCard>
-          )}
-        </div>
-
-        {/* Main Content Area */}
-        <div className="lg:col-span-6">
-          <GlassCard className="p-8 min-h-[600px]">
-            {article?.status === 'processing' ? (
-              <div className="flex flex-col items-center justify-center h-96 text-center">
-                <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6" />
-                <h3 className="text-lg font-bold text-white mb-2">Generating Content...</h3>
-                <p className="text-sm text-gray-400 font-mono">
-                  AI is researching and writing your article. This may take a few minutes.
-                </p>
-              </div>
-            ) : !article?.content ? (
-              <div className="flex flex-col items-center justify-center h-96 text-center">
-                <AlertOctagon className="text-gray-600 mb-4" size={48} />
-                <h3 className="text-lg font-bold text-white mb-2">No Content Available</h3>
-                <p className="text-sm text-gray-400">This article hasn't been generated yet.</p>
-              </div>
-            ) : isEditing ? (
-              <div>
-                <textarea
-                  value={editedContent}
-                  onChange={(e) => setEditedContent(e.target.value)}
-                  className="w-full h-[600px] bg-black/40 border border-white/20 rounded-lg p-6 text-gray-300 font-mono text-sm focus:border-blue-500 focus:outline-none resize-none"
-                  placeholder="Write your article content here (Markdown supported)..."
-                />
-                <div className="mt-4 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                  <p className="text-xs text-blue-300 font-mono">
-                    💡 Tip: You can use Markdown formatting (# headers, **bold**, *italic*, etc.)
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="prose prose-invert prose-lg max-w-none">
-                <ReactMarkdown 
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    h1: ({node, ...props}) => <h1 className="text-3xl font-bold text-white mb-6 pb-3 border-b border-white/10" {...props} />,
-                    h2: ({node, ...props}) => <h2 className="text-2xl font-bold text-white mt-8 mb-4" {...props} />,
-                    h3: ({node, ...props}) => <h3 className="text-xl font-bold text-gray-200 mt-6 mb-3" {...props} />,
-                    p: ({node, ...props}) => <p className="text-gray-300 leading-relaxed mb-4" {...props} />,
-                    ul: ({node, ...props}) => <ul className="list-disc list-inside space-y-2 text-gray-300 mb-4" {...props} />,
-                    ol: ({node, ...props}) => <ol className="list-decimal list-inside space-y-2 text-gray-300 mb-4" {...props} />,
-                    li: ({node, ...props}) => <li className="text-gray-300" {...props} />,
-                    blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-400 my-4" {...props} />,
-                    code: ({node, inline, ...props}: any) => inline 
-                      ? <code className="bg-white/10 text-blue-300 px-2 py-0.5 rounded font-mono text-sm" {...props} />
-                      : <code className="block bg-black/40 text-emerald-300 p-4 rounded-lg font-mono text-sm overflow-x-auto" {...props} />,
-                    a: ({node, ...props}) => <a className="text-blue-400 hover:text-blue-300 underline" target="_blank" rel="noopener noreferrer" {...props} />,
-                  }}
-                >
-                  {article.content}
-                </ReactMarkdown>
-              </div>
-            )}
-          </GlassCard>
-        </div>
-
-        {/* Right Sidebar - Outline */}
-        <div className="lg:col-span-3">
-          {article?.brief?.outline && (
-            <GlassCard className="p-6 sticky top-24">
-              <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Layers size={16} className="text-purple-400" />
-                Content Outline
-              </h3>
-              <div className="space-y-3">
-                {(Array.isArray(article.brief.outline) 
-                  ? article.brief.outline 
-                  : []
-                ).map((item: any, idx: number) => (
-                  <div key={idx} className="flex items-start gap-3 group cursor-pointer hover:bg-white/5 p-2 rounded transition-colors">
-                    <div className="flex-shrink-0 mt-1">
-                      <div className="w-2 h-2 rounded-full bg-purple-400/50 group-hover:bg-purple-400 transition-colors" />
-                    </div>
-                    <p className="text-sm text-gray-400 group-hover:text-white transition-colors leading-snug">
-                      {typeof item === 'string' ? item : item.text || item.title || JSON.stringify(item)}
-                    </p>
+                    <a 
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-mono truncate flex items-center gap-1 group"
+                    >
+                      <span className="truncate">{source.url}</span>
+                      <ExternalLink size={10} className="shrink-0" />
+                    </a>
+                    {source.source_origin && (
+                      <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 uppercase">
+                        {source.source_origin}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
-              
-              {article?.brief?.strategy && (
-                <div className="mt-6 pt-6 border-t border-white/10">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">SEO Strategy</h4>
-                  <p className="text-sm text-gray-400 leading-relaxed">{article.brief.strategy}</p>
-                </div>
-              )}
             </GlassCard>
           )}
+        </div>
+
+        {/* Right Column - Content */}
+        <div className="lg:col-span-2">
+          <GlassCard className="p-6 border-white/10">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <FileText className="text-white" size={20} />
+                <h3 className="text-lg font-bold text-white">
+                  {isEditing ? 'Edit Content' : 'Generated Content'}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {isEditing && (
+                  <>
+                    <button
+                      onClick={handleCancel}
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded transition-all"
+                    >
+                      <X size={14} />
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSave}
+                      disabled={updateMutation.isPending}
+                      className="flex items-center gap-2 px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded transition-all disabled:opacity-50"
+                    >
+                      <Save size={14} />
+                      {updateMutation.isPending ? 'Saving...' : 'Save'}
+                    </button>
+                  </>
+                )}
+                <span className="text-xs text-gray-500 font-mono">
+                  {isEditing ? editedContent.split(/\s+/).length : wordCount} words
+                </span>
+              </div>
+            </div>
+            
+            {article.content ? (
+              isEditing ? (
+                <textarea
+                  value={editedContent}
+                  onChange={(e) => setEditedContent(e.target.value)}
+                  className="w-full h-[800px] bg-black/40 border border-white/10 rounded-lg p-4 text-gray-300 font-mono text-sm focus:border-emerald-500 outline-none resize-none"
+                  placeholder="Edit your markdown content here..."
+                />
+              ) : (
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({node, ...props}) => <h1 className="text-3xl font-bold text-white mb-4 mt-6" {...props} />,
+                      h2: ({node, ...props}) => <h2 className="text-2xl font-bold text-white mb-3 mt-5" {...props} />,
+                      h3: ({node, ...props}) => <h3 className="text-xl font-bold text-gray-200 mb-2 mt-4" {...props} />,
+                      h4: ({node, ...props}) => <h4 className="text-lg font-semibold text-gray-300 mb-2 mt-3" {...props} />,
+                      p: ({node, ...props}) => <p className="text-gray-300 leading-relaxed mb-4" {...props} />,
+                      ul: ({node, ...props}) => <ul className="list-disc list-inside text-gray-300 mb-4 space-y-1" {...props} />,
+                      ol: ({node, ...props}) => <ol className="list-decimal list-inside text-gray-300 mb-4 space-y-1" {...props} />,
+                      strong: ({node, ...props}) => <strong className="text-white font-semibold" {...props} />,
+                      em: ({node, ...props}) => <em className="text-blue-300" {...props} />,
+                      code: ({node, ...props}) => <code className="bg-gray-800 px-1.5 py-0.5 rounded text-cyan-400 text-sm" {...props} />,
+                      blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-400 my-4" {...props} />,
+                    }}
+                  >
+                    {article.content}
+                  </ReactMarkdown>
+                </div>
+              )
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                <p className="text-gray-500 font-mono text-sm">
+                  {article.status === 'processing' ? 'Generating content...' : 'No content available'}
+                </p>
+              </div>
+            )}
+          </GlassCard>
         </div>
       </div>
     </div>

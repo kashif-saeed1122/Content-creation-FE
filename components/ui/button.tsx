@@ -2,50 +2,63 @@ import { cn } from "@/lib/utils";
 import { ButtonHTMLAttributes, forwardRef } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "default" | "primary" | "secondary" | "outline" | "ghost" | "danger";
+  variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   isLoading?: boolean;
+  glow?: boolean;
   children: React.ReactNode;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = "default", size = "md", isLoading, children, ...props }, ref) => {
+  ({ 
+    className, 
+    variant = "primary", 
+    size = "md", 
+    isLoading, 
+    glow = false,
+    children, 
+    ...props 
+  }, ref) => {
     const variants = {
-      default: "bg-white/10 hover:bg-white/20 text-white border border-white/20",
-      primary: "bg-blue-600 hover:bg-blue-500 text-white border border-blue-500/50 shadow-lg shadow-blue-500/25",
-      secondary: "bg-gray-600 hover:bg-gray-500 text-white border border-gray-500/50",
-      outline: "bg-transparent hover:bg-white/10 text-white border-2 border-white/30 hover:border-white/50",
+      primary: "bg-[var(--accent-cyan)] hover:bg-[#00ffaa] text-black border-none shadow-[0_0_20px_rgba(0,255,159,0.4)] hover:shadow-[0_0_30px_rgba(0,255,159,0.6)] font-bold",
+      secondary: "bg-transparent hover:bg-white/5 text-[var(--accent-cyan)] border border-[var(--accent-cyan)]/30 hover:border-[var(--accent-cyan)]/60",
       ghost: "bg-transparent hover:bg-white/5 text-white border-none",
-      danger: "bg-red-600 hover:bg-red-500 text-white border border-red-500/50 shadow-lg shadow-red-500/25"
+      danger: "bg-[var(--accent-magenta)] hover:bg-[#ff1a8c] text-white border-none shadow-[0_0_20px_rgba(255,0,128,0.4)]"
     };
 
     const sizes = {
-      sm: "px-3 py-1.5 text-sm rounded-md",
-      md: "px-4 py-2 text-base rounded-lg",
-      lg: "px-6 py-3 text-lg rounded-xl"
+      sm: "px-4 py-2 text-xs",
+      md: "px-6 py-3 text-sm",
+      lg: "px-8 py-4 text-base"
     };
 
     return (
       <button
         ref={ref}
         className={cn(
-          "font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50",
-          "disabled:opacity-50 disabled:cursor-not-allowed",
+          "font-mono uppercase tracking-wider transition-all duration-300 rounded-md",
+          "disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden",
           variants[variant],
           sizes[size],
+          glow && "animate-pulse-glow",
           isLoading && "cursor-wait",
           className
         )}
         disabled={isLoading || props.disabled}
         {...props}
       >
-        {isLoading ? (
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            Loading...
-          </div>
-        ) : (
-          children
+        <span className="relative z-10 flex items-center justify-center gap-2">
+          {isLoading ? (
+            <>
+              <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              PROCESSING...
+            </>
+          ) : (
+            children
+          )}
+        </span>
+        {!isLoading && (
+          <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
         )}
       </button>
     );

@@ -34,9 +34,7 @@ apiClient.interceptors.response.use(
 
         useAuthStore.getState().setAuth(data.user, data.access_token);
 
-        apiClient.defaults.headers.common['Authorization'] = `Bearer ${data.access_token}`;
-        originalRequest.headers['Authorization'] = `Bearer ${data.access_token}`;
-        
+        originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
         return apiClient(originalRequest);
       } catch (refreshError) {
         useAuthStore.getState().logout();
@@ -78,12 +76,4 @@ export const integrationApi = {
   delete: (id: string) => apiClient.delete(`/integrations/${id}`),
   test: (webhook_url: string, webhook_secret?: string) => 
     apiClient.post('/integrations/test', { webhook_url, webhook_secret }),
-};
-
-export const articleApi = {
-  list: (limit = 50) => apiClient.get(`/articles?limit=${limit}`),
-  get: (id: string) => apiClient.get(`/articles/${id}`),
-  create: (data: any) => apiClient.post('/articles', data),
-  delete: (id: string) => apiClient.delete(`/articles/${id}`),
-  stats: () => apiClient.get('/articles/stats'),
 };
